@@ -25,9 +25,10 @@ type chrom [NUM*2 + 1]float64
 var (
 	fXYNum    = flag.Int("n", 200, "Number of rows in file")
 	fMaking   = flag.Bool("m", false, "Making a file at start?")
-	fLimit    = flag.Int("l", 50, "Limit in random creation")
-	fStart    = flag.Int("s", 0, "Starting num in random creation")
-	fChromNum = flag.Int("c", 15, "Number of chroms in population")
+	fLimit    = flag.Int("l", 10, "Limit in random creation")
+	fStart    = flag.Int("s", -10, "Starting num in random creation")
+	fChromNum = flag.Int("c", 30, "Number of chroms in population")
+	fIter     = flag.Int("i", 5, "Number of populations")
 
 	//debug
 	fDebug   = flag.Bool("d", false, "Debug mode")
@@ -44,24 +45,66 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	var generation []*chrom
-
 	var source []xy
 
 	if *fMaking {
 		source = makeFile(*fXYNum, func(x float64) float64 {
-			return x * 3
+			return m.Cos(3*x) + m.Sin(x)
 		})
 	} else {
 		source = parseFile()
 	}
-	fmt.Println(*fChromNum)
+
+	start := time.Now()
+
 	generation = populate(*fChromNum)
+	fmt.Printf("Populated: %d chroms, %d gens", *fChromNum, NUM*2+1)
 
-	for n, v := range generation {
-		fmt.Printf("RawFitness for chrom %d %v is %v \n\n", n, *v, rawFitness(source, v))
+	timeStamp(&start)
+
+	var averageFitness, bestChrom float64
+
+	for i := 1; i <= *fIter; i++ {
+
+		fmt.Printf("\n##### Generation %d #####\n", i)
+
+		averageFitness, bestChrom = 0, 0
+		for _, v := range generation {
+			//fmt.Printf("RawFitness for chrom %d %v is %v \n\n", n, *v, rawFitness(source, v))
+			fit := rawFitness(source, v)
+			if bestChrom == 0 || bestChrom > fit {
+				bestChrom = fit
+			}
+			averageFitness += fit
+			if *fDebug {
+				fmt.Printf("%.2f|", fit)
+			}
+		}
+		fmt.Printf("\nAverage Raw fitness: %v, Best chrom: %v", averageFitness/float64(len(generation)), bestChrom)
+
+		//timeStamp(&start)
+		timeStamp(&start)
+
+		normal := getNormal(source, generation)
+		generation = evolve(source, generation, normal)
+		fmt.Print("Next population created.")
+		// for _, v := range generation {
+		// 	//fmt.Printf("RawFitness for chrom %d %v is %v \n\n", n, *v, rawFitness(source, v))
+		// 	fmt.Printf("%v , ", nFitness(source, v, normal))
+		// }
+
+		timeStamp(&start)
 	}
-
 }
+
+//for debug TODO: real benchmarks
+func timeStamp(t *time.Time) {
+	duration := time.Since(*t)
+	fmt.Printf("\n===Time elapsed: %s ===\n", duration)
+	*t = time.Now()
+}
+
+//###############################################################################################
 
 func populate(num int) []*chrom {
 	g := make([]*chrom, num)
@@ -69,6 +112,79 @@ func populate(num int) []*chrom {
 		g[i] = generateChrom()
 	}
 	return g
+}
+
+//Take and MODIFY population
+func evolve(in []xy, gen []*chrom, normal float64) []*chrom {
+	//Roulette rand UGLY version
+	type MinMax struct {
+		min float64
+		max float64
+	}
+	full := make([]MinMax, len(gen))
+	var current float64
+	for n, v := range gen {
+		full[n].min = current
+		current += nFitness(in, v, normal)
+		full[n].max = current
+	}
+
+	next := make([]*chrom, 0, len(gen))
+	for i := 0; i < len(gen); i++ {
+		rnd := rand.Float64()
+		for n, v := range full {
+			if rnd >= v.min && rnd < v.max {
+				newGen := mutate(gen[n], 80, v.max-v.min)
+				newGen = crossover(newGen, next, 80)
+				next = append(next, newGen)
+			}
+		}
+	}
+
+	return next
+}
+
+//function mutates 1 to *bitsNum* with the chance of *chance*
+// func mutateBits(c *chrom, chance int, bitsNum int) *chrom {
+// 	if rand.Intn(100) > chance {
+// 		return c
+// 	}
+//
+// 	mut := new(chrom)
+// 	bits := make([]int, rand.Intn(bitsNum))
+// 	for n := range bits {
+// 		bits[n] = rand.Intn(len(*c) * 64)
+//
+// 	}
+// 	return mut
+// }
+
+func mutate(c *chrom, chance int, close float64) *chrom {
+	if rand.Intn(100) > chance {
+		return c
+	}
+	l := len(*c)
+	mut := new(chrom)
+	*mut = *c
+	for i := 0; i < 3; i++ {
+		mut[rand.Intn(l-1)] += (rand.Float64()*2 - 1)
+	}
+	return mut
+}
+
+func crossover(c *chrom, next []*chrom, chance int) *chrom {
+	if rand.Intn(100) > chance {
+		return c
+	}
+	curLength := len(next) - 1
+	if curLength <= 1 {
+		return c
+	}
+	cross := 5 //rand.Intn(len(*c) - 1) //"line" of crossing
+	crossed := new(chrom)
+	copy(crossed[:cross], c[:cross])
+	copy(crossed[cross:], next[rand.Intn(curLength)][cross:])
+	return crossed
 }
 
 func generateChrom() *chrom {
@@ -101,6 +217,23 @@ func rawFitness(in []xy, c *chrom) float64 {
 	return total / float64(len(in))
 }
 
+func offFitness(in []xy, c *chrom) float64 {
+	return 1 / (1 + rawFitness(in, c))
+}
+
+func getNormal(in []xy, gen []*chrom) float64 {
+	var sum float64
+	for _, v := range gen {
+		sum += offFitness(in, v)
+	}
+	return sum
+}
+
+func nFitness(in []xy, c *chrom, norm float64) float64 {
+	return offFitness(in, c) / norm
+}
+
+//Our "fourier" function
 func f(x float64, c *chrom) float64 {
 	y := c[0] / 2
 	for i := 1; i <= NUM; i++ {

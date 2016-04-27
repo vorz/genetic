@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	m "math"
 	"testing"
 )
 
@@ -22,14 +23,32 @@ func TestMakeParseFile(t *testing.T) {
 	}
 }
 
+//Test raw fitness
+func TestRawFitness(t *testing.T) {
+	source := makeFile(100, func(x float64) float64 {
+		return 1*m.Cos(1*x) + 2*m.Cos(2*x) + 3*m.Cos(3*x) + 4*m.Cos(4*x) + 5*m.Cos(5*x)
+	})
+
+	var chromosome dna
+	chromosome.gene = [11]float64{0.0, 1.0, 0.0, 2.0, 0.0, 3.0, 0.0, 4.0, 0.0, 5.0, 0.0} //NUM should be 5
+	rawFitness(source, &chromosome)
+	Y := f(source[0].x, &chromosome)
+	if Y != source[0].y {
+		t.Errorf("f(x) != y from data, %v != %v", Y, source[0].y)
+	}
+	if chromosome.fitness != 0 {
+		t.Errorf("Raw fitness isnt working, %v != 0", chromosome.fitness)
+	}
+}
+
 //Test normal fitness
 func TestNormFitness(t *testing.T) {
 	s := parseFile()
-	g := populate(100)
-	normal := getNormal(s, g)
+	g := populate(s, 100)
+	normal := getNormal(g)
 	var sum float64
 	for _, v := range g {
-		sum += nFitness(s, v, normal)
+		sum += nFitness(v, normal)
 	}
 	number := fmt.Sprintf("%.2f", sum) //sort of rounding, LOL
 	if number != "1.00" {
@@ -37,29 +56,11 @@ func TestNormFitness(t *testing.T) {
 	}
 }
 
-func TestMutate(t *testing.T) {
-	s := parseFile()
-	g := populate(1)
-	normal := getNormal(s, g)
-	//fmt.Println(g[0])
-	g = evolve(s, g, normal)
-	//fmt.Println(g[0])
-}
-
-func TestCrossover(t *testing.T) {
-	s := parseFile()
-	g := populate(5)
-	normal := getNormal(s, g)
-	fmt.Println(g[0])
-	fmt.Println(g[1])
-	fmt.Println(g[2])
-	fmt.Println(g[3])
-	fmt.Println(g[4])
-	fmt.Println("=======================================================")
-	g = evolve(s, g, normal)
-	fmt.Println(g[0])
-	fmt.Println(g[1])
-	fmt.Println(g[2])
-	fmt.Println(g[3])
-	fmt.Println(g[4])
-}
+// func TestMutate(t *testing.T) {
+// 	s := parseFile()
+// 	g := populate(s, 1)
+// 	normal := getNormal(g)
+// 	//fmt.Println(g[0])
+// 	g = evolve(s, g, normal)
+// 	//fmt.Println(g[0])
+// }

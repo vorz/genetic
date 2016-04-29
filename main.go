@@ -34,14 +34,15 @@ func (d dnaCode) Swap(i, j int)      { d[i], d[j] = d[j], d[i] }
 func (d dnaCode) Less(i, j int) bool { return d[i].fitness < d[j].fitness }
 
 var (
-	fXYNum    = flag.Int("n", 200, "Number of rows in file")
-	fMaking   = flag.Bool("m", false, "Making a file at start?")
-	fSimulate = flag.Bool("sim", false, "Simulate function when creating file?")
-	fCross    = flag.Bool("cross", false, "Is crossover using?")
-	fGenStd   = flag.Int("std", 1, "Standard devotion when generating population")
-	fMean     = flag.Int("mean", 0, "Mean value when generating population")
-	fdnaNum   = flag.Int("c", 30, "Number of dnas in population")
-	fIter     = flag.Int("i", 999999, "Number of populations")
+	fXYNum      = flag.Int("n", 200, "Number of rows in file")
+	fMaking     = flag.Bool("m", false, "Making a file at start?")
+	fSimulate   = flag.Bool("sim", false, "Simulate function when creating file?")
+	fCross      = flag.Bool("cross", false, "Is crossover using?")
+	fGenStd     = flag.Int("std", 1, "Standard devotion when generating population")
+	fMean       = flag.Int("mean", 0, "Mean value when generating population")
+	fdnaNum     = flag.Int("c", 30, "Number of dnas in population")
+	fIter       = flag.Int("i", 999999, "Number of populations")
+	fTournament = flag.Int("t", 0, "Use tournament selection if t > 0")
 
 	//debug
 	fDebug = flag.Bool("d", false, "Debug mode")
@@ -57,7 +58,7 @@ func main() {
 	if *fMaking {
 		if !(*fSimulate) {
 			source = makeFile(*fXYNum, func(x float64) float64 {
-				return x * 5
+				return m.Sin(x) //m.Pow(x, 2)
 			})
 		} else {
 			source = makeFile(*fXYNum, func(x float64) float64 {
@@ -76,22 +77,22 @@ func main() {
 
 	timeStamp(&start)
 
-	var averageFitness, lastAvFitness, bestdna, curBest float64
+	var averageFitness, curBestDna float64
+	var bestDna *dna
 	var timeBest time.Time
-	var curStd float64
+	var curStd = float64(*fGenStd) //curStd is current standar dev for gaussian distrubtion
 
 	for i := 1; i <= *fIter; i++ {
 
 		fmt.Printf("\n##### Generation %d #####\n", i)
 
-		lastAvFitness = averageFitness
-		averageFitness, bestdna = 0, 0
+		averageFitness, curBestDna = 0, 0
 		var bestDnaNum int
 		for n, v := range generation {
 			//fmt.Printf("RawFitness for dna %d %v is %v \n\n", n, *v, rawFitness(source, v))
 			fit := v.fitness
-			if bestdna == 0 || bestdna > fit {
-				bestdna = fit
+			if curBestDna == 0 || curBestDna > fit {
+				curBestDna = fit
 				bestDnaNum = n
 			}
 			averageFitness += fit
@@ -99,37 +100,33 @@ func main() {
 				fmt.Printf("%.2f|", fit)
 			}
 		}
-		fmt.Printf("\nAverage Raw fitness: %v, Best dna in current population: %v, Best overall dna: %v, Std: %v", averageFitness/float64(len(generation)), bestdna, curBest, curStd)
-		fmt.Printf("\nBest dna: %v", generation[bestDnaNum].gene)
 
-		//timeStamp(&start)
-
-		//curStd is current standar dev for gaussian distrubtion
-		if i == 1 {
-			curStd = 1.0
-		} else {
-			if averageFitness/lastAvFitness < 1 && curStd > 0.05 {
-				if (curStd - averageFitness/lastAvFitness) > 0.05 {
-					curStd -= 0.05
-				} else {
-					curStd -= averageFitness / lastAvFitness
-				}
-			}
-		}
-
-		normal := getNormal(generation)
-		generation = evolve(source, generation, normal, 1.0)
-		fmt.Print("Next population created.")
-
-		timeStamp(&start)
-		if curBest > bestdna || i == 1 {
-			curBest = bestdna
+		if i == 1 || bestDna.fitness > curBestDna {
+			bestDna = generation[bestDnaNum]
 			timeBest = time.Now()
 		} else {
-			if time.Since(timeBest) > time.Second*10 { // if program cant find better dna in 10 sec it ends
+			if time.Since(timeBest) > time.Second*20 { // if program cant find better dna in 20 sec it ends
 				break
 			}
 		}
+
+		//every 50 iterations
+		if i%50 == 0 {
+			curStd /= 2
+		}
+
+		fmt.Printf("\nAverage Raw fitness: %v, Best dna in current population: %v, Best overall dna: %v, Std: %v", averageFitness/float64(len(generation)), curBestDna, bestDna.fitness, curStd)
+		fmt.Printf("\nBest dna: %v", bestDna.gene)
+
+		if *fTournament > 0 {
+			generation = tournamentEvolve(source, generation, curStd, *fTournament)
+		} else {
+			normal := getNormal(generation)
+			generation = evolve(source, generation, normal, curStd)
+		}
+
+		timeStamp(&start)
+
 	}
 
 	duration := time.Since(totalTime)
@@ -146,7 +143,7 @@ func timeStamp(t *time.Time) {
 
 //###############################################################################################
 
-//Crate first population
+//Create first population
 func populate(in []xy, num int) []*dna {
 	g := make([]*dna, num)
 	for i := 0; i < num; i++ {
@@ -156,9 +153,9 @@ func populate(in []xy, num int) []*dna {
 	return g
 }
 
-//Take and MODIFY population
+//Take and MODIFY population by roulette selection method
 func evolve(in []xy, gen []*dna, normal float64, std float64) []*dna {
-	//Roulette rand UGLY version TODO optimization
+	//Roulette selection UGLY version TODO optimization
 	type MinMax struct {
 		min float64
 		max float64
@@ -196,6 +193,46 @@ func evolve(in []xy, gen []*dna, normal float64, std float64) []*dna {
 	return next
 }
 
+//Evolve with tournament selection, take random [:window] from generation and leave 1 best
+func tournamentEvolve(in []xy, gen []*dna, std float64, window int) []*dna {
+	if window < 2 {
+		window = 2
+	}
+	l := len(gen)
+	next := make([]*dna, l)
+
+	for n := range gen {
+		r := rand.Intn(l - 1)
+		var exhib []*dna
+		if (r + window) < l-1 {
+			exhib = gen[r : r+window]
+		} else {
+			exhib = gen[r-window : r]
+		}
+		var newDna *dna
+		for n, v := range exhib {
+			if newDna == nil || newDna.fitness > v.fitness {
+				newDna = exhib[n]
+			}
+		}
+		newDna = mutate(newDna, 75, std)
+		rawFitness(in, newDna)
+		next[n] = newDna
+	}
+
+	//Doubling code but who cares
+	if *fCross {
+		var cross = dnaCode(next)
+		sort.Sort(cross)
+		crossedDna := crossover(cross[0], cross[1])
+		rawFitness(in, crossedDna)
+		next[rand.Intn(len(next)-1)] = crossedDna
+	}
+
+	return next
+
+}
+
 //function mutates 1 to *bitsNum* with the chance of *chance*
 // func mutateBits(c *dna, chance int, bitsNum int) *dna {
 // 	if rand.Intn(100) > chance {
@@ -229,7 +266,7 @@ func mutate(c *dna, chance int, std float64) *dna {
 	return mut
 }
 
-//most dumb version of crossover
+//dumb version of crossover
 func crossover(dna1, dna2 *dna) *dna {
 
 	if rand.Intn(1) == 0 {
@@ -253,17 +290,6 @@ func generatedna() *dna {
 	return c
 }
 
-//Calculate and change raw fitness for a single dna
-func rawFitness(in []xy, c *dna) {
-	var total float64
-
-	for _, v := range in {
-		total += m.Pow(v.y-f(v.x, c), 2) //Least squares sort of
-	}
-
-	c.fitness = total
-}
-
 func offFitness(c *dna) float64 {
 	return 1 / (1 + c.fitness)
 }
@@ -278,6 +304,15 @@ func getNormal(gen []*dna) float64 {
 
 func nFitness(c *dna, norm float64) float64 {
 	return offFitness(c) / norm
+}
+
+//Calculate and change raw fitness for a single dna
+func rawFitness(in []xy, c *dna) {
+	var total float64
+	for _, v := range in {
+		total += m.Pow(v.y-f(v.x, c), 2) //Least squares sort of
+	}
+	c.fitness = total
 }
 
 //Our "fourier" function

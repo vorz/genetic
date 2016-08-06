@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pkg/profile"
 )
 
 //NUM total number of coefficents = NUM*2+1
@@ -43,12 +45,16 @@ var (
 	fdnaNum     = flag.Int("c", 30, "Number of dnas in population")
 	fIter       = flag.Int("i", 999999, "Number of populations")
 	fTournament = flag.Int("t", 0, "Use tournament selection if t > 0")
+	fTimeOut    = flag.Int("w", 20, "Timeout for main loop")
 
 	//debug
 	fDebug = flag.Bool("d", false, "Debug mode")
 )
 
 func main() {
+
+	defer profile.Start(profile.MemProfile, profile.ProfilePath("./pro")).Stop()
+
 	flag.Parse()
 	rand.Seed(time.Now().UnixNano())
 
@@ -58,7 +64,7 @@ func main() {
 	if *fMaking {
 		if !(*fSimulate) {
 			source = makeFile(*fXYNum, func(x float64) float64 {
-				return m.Sin(x) //m.Pow(x, 2)
+				return m.Sin(x * 3) //m.Pow(x, 2)
 			})
 		} else {
 			source = makeFile(*fXYNum, func(x float64) float64 {
@@ -82,6 +88,7 @@ func main() {
 	var timeBest time.Time
 	var curStd = float64(*fGenStd) //curStd is current standar dev for gaussian distrubtion
 
+	//Main loop
 	for i := 1; i <= *fIter; i++ {
 
 		fmt.Printf("\n##### Generation %d #####\n", i)
@@ -89,7 +96,6 @@ func main() {
 		averageFitness, curBestDna = 0, 0
 		var bestDnaNum int
 		for n, v := range generation {
-			//fmt.Printf("RawFitness for dna %d %v is %v \n\n", n, *v, rawFitness(source, v))
 			fit := v.fitness
 			if curBestDna == 0 || curBestDna > fit {
 				curBestDna = fit
@@ -105,7 +111,7 @@ func main() {
 			bestDna = generation[bestDnaNum]
 			timeBest = time.Now()
 		} else {
-			if time.Since(timeBest) > time.Second*20 { // if program cant find better dna in 20 sec it ends
+			if time.Since(timeBest) > time.Second*time.Duration(*fTimeOut) { // if program cant find better dna in 20 sec it ends
 				break
 			}
 		}
@@ -147,7 +153,7 @@ func timeStamp(t *time.Time) {
 func populate(in []xy, num int) []*dna {
 	g := make([]*dna, num)
 	for i := 0; i < num; i++ {
-		g[i] = generatedna()
+		g[i] = generateDna()
 		rawFitness(in, g[i])
 	}
 	return g
@@ -173,10 +179,11 @@ func evolve(in []xy, gen []*dna, normal float64, std float64) []*dna {
 		rnd := rand.Float64()
 		for n, v := range full {
 			if rnd >= v.min && rnd < v.max {
-				newGen := mutate(gen[n], 75, std)
-				//newGen = crossover(newGen, next, 80)
+				newGen, isNew := mutate(gen[n], 75, std)
 				next = append(next, newGen)
-				rawFitness(in, newGen)
+				if isNew {
+					rawFitness(in, newGen)
+				}
 			}
 		}
 	}
@@ -215,18 +222,12 @@ func tournamentEvolve(in []xy, gen []*dna, std float64, window int) []*dna {
 				newDna = exhib[n]
 			}
 		}
-		newDna = mutate(newDna, 75, std)
-		rawFitness(in, newDna)
+		var isNew bool
+		newDna, isNew = mutate(newDna, 75, std)
+		if isNew {
+			rawFitness(in, newDna)
+		}
 		next[n] = newDna
-	}
-
-	//Doubling code but who cares
-	if *fCross {
-		var cross = dnaCode(next)
-		sort.Sort(cross)
-		crossedDna := crossover(cross[0], cross[1])
-		rawFitness(in, crossedDna)
-		next[rand.Intn(len(next)-1)] = crossedDna
 	}
 
 	return next
@@ -249,9 +250,9 @@ func tournamentEvolve(in []xy, gen []*dna, std float64, window int) []*dna {
 // }
 
 //Standard mutation with gaussian distrubtion of genes
-func mutate(c *dna, chance int, std float64) *dna {
+func mutate(c *dna, chance int, std float64) (*dna, bool) {
 	if rand.Intn(100) > chance {
-		return c
+		return c, false
 	}
 	if std == 0 {
 		std = 1.0
@@ -263,13 +264,13 @@ func mutate(c *dna, chance int, std float64) *dna {
 			mut.gene[n] = rand.NormFloat64()*std + mut.gene[n] //mean is current gene val, std dev is 1 by def
 		}
 	}
-	return mut
+	return mut, true
 }
 
 //dumb version of crossover
 func crossover(dna1, dna2 *dna) *dna {
 
-	if rand.Intn(1) == 0 {
+	if rand.Intn(2) == 0 {
 		dna1, dna2 = dna2, dna1
 	}
 
@@ -282,7 +283,7 @@ func crossover(dna1, dna2 *dna) *dna {
 }
 
 //Generate single dna
-func generatedna() *dna {
+func generateDna() *dna {
 	c := new(dna)
 	for i := range c.gene {
 		c.gene[i] = rand.NormFloat64()*float64(*fGenStd) + float64(*fMean) //Gaussian dist
@@ -330,7 +331,7 @@ func makeFile(n int, f func(x float64) float64) []xy {
 	out := make([]xy, n)
 
 	for i := 0; i < n; i++ {
-		out[i].x = rand.Float64()*20 - 10 //*m.Pi*2 - m.Pi
+		out[i].x = rand.Float64()*20 - 10
 		out[i].y = f(out[i].x)
 	}
 

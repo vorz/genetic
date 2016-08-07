@@ -1,6 +1,6 @@
 # genetic
 
-Simple genetic algorythm programm for polynomial fitting on Go.
+Simple genetic algorythm program for polynomial fitting on Go.
 
 + selection by roulette method
 + tournament selection
